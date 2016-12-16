@@ -28,9 +28,9 @@ my $doit;
 #-------------------------------------------------------------------------------
 Getopt::Long::Configure( "no_ignore_case", "bundling" );
 GetOptions(
-    'm|mount=s'           => \$mnt_pnt,
-    'h|help|?'            => \$help,
-    'd|doit'              => \$doit,
+    'm|mount=s' => \$mnt_pnt,
+    'h|help|?'  => \$help,
+    'd|doit'    => \$doit,
 );
 
 pod2usage(1) unless $doit;
