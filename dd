@@ -3,6 +3,12 @@
 use warnings;
 use strict;
 use Data::Dumper;
+use autodie;
+
+use Tie::File;
+my $fstab = "/etc/fstab";
+
+tie my @fstab, 'Tie::File', $fstab or die "unable to tie $fstab: $!\n";
 
 # placeholder for lsblk output
 my $HoA_ref;
@@ -31,7 +37,7 @@ my @matched = _get_matching_dev( $mounted, $umounted );
 my @systemdisk = uniq(@matched);
 
 if ( scalar @systemdisk == 1 ) {
-    for ( @systemdisk ) {
+    for (@systemdisk) {
         $systemdisk = $_;
     }
 }
@@ -41,24 +47,78 @@ else {
     print "we have filesystems mounted in different disks!\n";
     exit 1;
 }
+print "Systemdisk:\t$systemdisk\n";
+
+# dictionary
+my $dsk_dct = _gen_disk_dict($disks);
 
 # generate partition/mount point hash
 _gen_mntpnt_dict($disks);
-# skip system disk / partitions from further processing
-for my $part ( keys %$partitions ){
-    next if $part =~ m/$systemdisk/;
-    print "Systemdisk:\t$systemdisk\n";
-    print $part, " \t" ;
 
-    # does it have a filesystem? (
-    if ( $HoA_ref->{$part}[2] eq "0" ) {
-        print "$part has no uuid, so no filesystem\n" ;
+# skip system partitions from further processing
+#for my $part ( keys %$partitions ){
+#    next if $part =~ m/$systemdisk/;
+#print $part, " \t" ;
+
+# does it have a filesystem? (
+#    if ( $HoA_ref->{$part}[2] eq "0" ) {
+#        print "$part has no uuid, so no filesystem\n" ;
+#    }
+#    else {
+#        print $HoA_ref->{$part}[2], "\n" ;
+#    }
+#}
+
+my $dsk_inf_ref = _disk_has_part();
+
+# print Dumper $HoA_ref;
+
+for my $disk ( sort keys $dsk_inf_ref ) {
+
+    # skip systemdisk
+    next if $disk eq $systemdisk;
+
+    # if no partitions, scalar will be 0, create one with msdos label
+    if ( scalar @{ $dsk_inf_ref->{$disk} } eq "0" ) {
+        print "$disk has no partition, creating one now...\n";
+        system
+"/sbin/parted --script /dev/$disk mklabel msdos mkpart primary 1MiB 100%";
     }
-    else {
-        print $HoA_ref->{$part}[2], "\n" ;
+    elsif ( scalar @{ $dsk_inf_ref->{$disk} } eq "1" ) {
+        my $part  = $dsk_inf_ref->{$disk}[0];
+        my $uuidp = $HoA_ref->{$part}[2];
+        if ( $HoA_ref->{$part}[3] eq "0" ) {
+            print
+              "$part has no uuid, so no file system, creating one now....\n";
+            system "/sbin/mkfs.ext4 /dev/$part";
+        }
+        if ( $HoA_ref->{$part}[3] ne "ext4" ) {
+            print
+              "$part has not an ext4 file system but $HoA_ref->{$part}[3]\n";
+            print
+"removing $HoA_ref->{$part}[3] partition and creating a ext4 one...\n";
+            system
+              "/sbin/parted --script /dev/$disk rm 1 mkpart primary 1MiB 100%";
+            system "/sbin/mkfs.ext4 /dev/$part";
+        }
+        else {
+            print $HoA_ref->{$part}[2] . "\t" . $dsk_dct->{$disk}, "\n" ;
+            _find_uuid_fstab( $HoA_ref->{$part}[2], $dsk_dct->{$disk} );
+        }
     }
 }
 
+sub _find_uuid_fstab {
+    my ( $uuid, $disk ) = @_;
+    print " $uuid \t $disk\n" ;
+
+    for my $line (@fstab) {
+        if ( $line =~ m/$uuid/i ) {
+            return 1;    # true if $uuid found in file
+        }
+    }
+    push @fstab, "UUID=$uuid $mnt_pnt\/$disk\t\t\text4\tdefaults\t0 0";
+}
 
 # ===============
 # subroutines, do not change anything from here unless
@@ -109,6 +169,18 @@ sub _detect_blk_parts {
 #    print "\tfs type: " . $HoA_ref->{$dev}[3] . "\n";
 #    print "=" x 72 . "\n";
 #}
+
+sub _disk_has_part {
+    my $child_of_ref;
+    my @devs  = keys %$HoA_ref;
+    my @parts = grep /\d/, @devs;
+    my @disks = grep !/\d/, @devs;
+    for my $disk (@disks) {
+        my @partitions = grep /$disk/, @parts;
+        $child_of_ref->{$disk} = [@partitions];
+    }
+    return $child_of_ref;
+}
 
 # get mounted/umounted partitions
 # returns 2 array refs
@@ -178,14 +250,14 @@ sub uniq {
 # etc). After that we walk the $mnt_pnt tree and create the directories
 # if needed
 sub _gen_mntpnt_dict {
-    my ( $disks ) = @_;
-    my @disks = sort (keys %$disks) ;
-    @disks = grep ! /$systemdisk/, @disks;
+    my ($disks) = @_;
+    my @disks = sort ( keys %$disks );
+    @disks = grep !/$systemdisk/, @disks;
     my $nr_nonsysdisks = scalar @disks;
-    
+
     my %dict;
     my $nr = 0;
-    for my $disk ( @disks ) {
+    for my $disk (@disks) {
         next if $disk eq $systemdisk;
         $dict{$disk} = $nr;
         $nr++;
@@ -198,12 +270,29 @@ sub _gen_mntpnt_dict {
     }
     for my $disk ( keys %dict ) {
         if ( -d "$mnt_pnt/$dict{$disk}" ) {
-            print "$mnt_pnt/$dict{$disk} exists\n"; 
+            print "$mnt_pnt/$dict{$disk} exists\n";
         }
         else {
-            print "$mnt_pnt/$dict{$disk} does not exist, creating mount pooint ...\n";
+            print
+"$mnt_pnt/$dict{$disk} does not exist, creating mount pooint ...\n";
             mkdir "$mnt_pnt/$dict{$disk}", 0755;
         }
     }
+}
+
+sub _gen_disk_dict {
+    my ($disks) = @_;
+    my @disks = sort ( keys %$disks );
+    @disks = grep !/$systemdisk/, @disks;
+    my $nr_nonsysdisks = scalar @disks;
+
+    my %dict;
+    my $nr = 0;
+    for my $disk (@disks) {
+        next if $disk eq $systemdisk;
+        $dict{$disk} = $nr;
+        $nr++;
+    }
+    return \%dict;
 }
 
