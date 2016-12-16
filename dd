@@ -5,10 +5,12 @@ use strict;
 use Data::Dumper;
 use autodie;
 
-use Tie::File;
-my $fstab = "/etc/fstab";
+use Getopt::Long;
+use Pod::Usage;
 
-tie my @fstab, 'Tie::File', $fstab or die "unable to tie $fstab: $!\n";
+# global variables
+my $help  = undef;
+my $fstab = "/etc/fstab";
 
 # placeholder for lsblk output
 my $HoA_ref;
@@ -18,6 +20,24 @@ my $systemdisk;
 
 # placeholder for mountpoints info
 my $mnt_pnt = "/grid";
+
+my $doit;
+
+#-------------------------------------------------------------------------------
+# cli options
+#-------------------------------------------------------------------------------
+Getopt::Long::Configure( "no_ignore_case", "bundling" );
+GetOptions(
+    'm|mount=s'           => \$mnt_pnt,
+    'h|help|?'            => \$help,
+    'd|doit'              => \$doit,
+);
+
+pod2usage(1) unless $doit;
+
+use Tie::File;
+
+tie my @fstab, 'Tie::File', $fstab or die "unable to tie $fstab: $!\n";
 
 # save results of lsblk -n -i in @lsblk
 my @lsblk =
@@ -55,23 +75,7 @@ my $dsk_dct = _gen_disk_dict($disks);
 # generate partition/mount point hash
 _gen_mntpnt_dict($disks);
 
-# skip system partitions from further processing
-#for my $part ( keys %$partitions ){
-#    next if $part =~ m/$systemdisk/;
-#print $part, " \t" ;
-
-# does it have a filesystem? (
-#    if ( $HoA_ref->{$part}[2] eq "0" ) {
-#        print "$part has no uuid, so no filesystem\n" ;
-#    }
-#    else {
-#        print $HoA_ref->{$part}[2], "\n" ;
-#    }
-#}
-
 my $dsk_inf_ref = _disk_has_part();
-
-# print Dumper $HoA_ref;
 
 for my $disk ( sort keys $dsk_inf_ref ) {
 
@@ -102,22 +106,10 @@ for my $disk ( sort keys $dsk_inf_ref ) {
             system "/sbin/mkfs.ext4 /dev/$part";
         }
         else {
-            print $HoA_ref->{$part}[2] . "\t" . $dsk_dct->{$disk}, "\n" ;
+            print $HoA_ref->{$part}[2] . "\t" . $dsk_dct->{$disk}, "\n";
             _find_uuid_fstab( $HoA_ref->{$part}[2], $dsk_dct->{$disk} );
         }
     }
-}
-
-sub _find_uuid_fstab {
-    my ( $uuid, $disk ) = @_;
-    print " $uuid \t $disk\n" ;
-
-    for my $line (@fstab) {
-        if ( $line =~ m/$uuid/i ) {
-            return 1;    # true if $uuid found in file
-        }
-    }
-    push @fstab, "UUID=$uuid $mnt_pnt\/$disk\t\t\text4\tdefaults\t0 0";
 }
 
 # ===============
@@ -296,3 +288,26 @@ sub _gen_disk_dict {
     return \%dict;
 }
 
+sub _find_uuid_fstab {
+    my ( $uuid, $disk ) = @_;
+    print " $uuid \t $disk\n";
+
+    for my $line (@fstab) {
+        if ( $line =~ m/$uuid/i ) {
+            return 1;    # true if $uuid found in file
+        }
+    }
+    push @fstab, "UUID=$uuid $mnt_pnt\/$disk\t\t\text4\tdefaults\t0 0";
+}
+
+__END__
+
+=head1 NAME
+
+blkid_fstab - generate fstab uuid entries for non-system disks
+
+=head1 SYNOPSIS
+
+blkid_fstab --doit 
+
+=cut
