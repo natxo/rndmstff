@@ -1,0 +1,74 @@
+#!/usr/bin/env perl 
+
+use strict;
+use warnings;
+
+my $target_dir = "/etc/systemd/system/multi-user.target.wants/";
+my $cust_file  = "/tmp/customers.conf";
+
+my @lines;
+
+chdir $target_dir;
+
+opendir( my $dh, $target_dir );
+
+my @lea_svcs = grep { /^test.*/ && "$target_dir/$_" } readdir($dh);
+
+# strip the lea@  and .service part from the symlink name, keep the customer
+my @customers_svcs = map { s/test\@(.*)\.service$/$1/g; $_ } @lea_svcs;
+
+open( my $fh, "<", $cust_file );
+
+# read customer file, fill @lines array with customers
+while ( my $cust = <$fh> ) {
+    next if $cust =~ /^#.*/;
+    chomp $cust;
+    push @lines, $cust;
+}
+
+my ( @union, @intersection, @difference );
+
+my %count = ();
+
+foreach my $element ( @lines, @customers_svcs ) {
+    $count{$element}++;
+}
+
+foreach my $element ( keys %count ) {
+    push @union, $element;
+    push @{ $count{$element} > 1 ? \@intersection : \@difference }, $element;
+}
+
+if ( scalar @difference > 0 ) {
+    my @in_cust_svcs;
+    my @in_cust_file;
+
+    # get customers in customers file that are not in the services
+    # enable those services
+    for my $item (@difference) {
+        if ( grep( /$item/, @customers_svcs ) ) {
+            push @in_cust_svcs, $item;
+        }
+        if ( grep( /$item/, @lines ) ) {
+            push @in_cust_file, $item;
+        }
+    }
+    print "In svcs, not in customer file, removing service(s):\n";
+    print "=" x 78 . "\n";
+    for (@in_cust_svcs) {
+        next unless $_ =~ /[[:alpha:]]/;
+        print "\t[$_]\n";
+        print "systemctl stop test\@$_\.service\n";
+        print "systemctl disable test\@$_\.service\n";
+    }
+
+    print "In customer file, not svcs, adding service(s):\n";
+    print "=" x 78 . "\n";
+    for (@in_cust_file) {
+        next unless $_ =~ /[[:alpha:]]/;
+        print "\t[$_]\n";
+        print "systemctl enable test\@$_\.service\n";
+        print "systemctl start test\@$_\.service\n";
+    }
+}
+
