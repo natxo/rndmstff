@@ -2,20 +2,32 @@
 
 use strict;
 use warnings;
+use Getopt::Long;
+use Pod::Usage;
 
-my $target_dir = "/etc/systemd/system/multi-user.target.wants/";
-my $cust_file  = "/tmp/customers.conf";
+my ( @lines );
 
-my @lines;
+
+Getopt::Long::Configure( "no_ignore_case", "bundling" );
+GetOptions(
+    't|target_dir=s' =>
+      \( my $target_dir = "/etc/systemd/system/multi-user.target.wants/" ),
+    'c|cust_file=s'        => \my $cust_file,
+    'h|help|?'             => \my $help,
+    's|service_template=s' => \my $svc_template,
+);
+
+pod2usage( -verbose => 2, -noperldoc => 1 ) if $help;
+pod2usage() unless $cust_file and $svc_template;
 
 chdir $target_dir;
 
 opendir( my $dh, $target_dir );
 
-my @lea_svcs = grep { /^test.*/ && "$target_dir/$_" } readdir($dh);
+my @target_svcs = grep { /^test.*/ && "$target_dir/$_" } readdir($dh);
 
-# strip the lea@  and .service part from the symlink name, keep the customer
-my @customers_svcs = map { s/test\@(.*)\.service$/$1/g; $_ } @lea_svcs;
+# strip svc_template@  and .service part from symlink name, keep customer
+my @customers_svcs = map { s/test\@(.*)\.service$/$1/g; $_ } @target_svcs;
 
 open( my $fh, "<", $cust_file );
 
@@ -72,3 +84,27 @@ if ( scalar @difference > 0 ) {
     }
 }
 
+=head1 NAME
+
+enable_disable_sysctl_svcs - create or remove systemctl service instances based on a file listing them
+
+=head1 DESCRIPTION
+
+If you need to create systemctl files that are similar but for a few arguments, then you can use template unit files.
+
+This tool helps to create or remove systemctl services according the the list of names in a text file (one per line)
+
+=head1 USAGE 
+
+systemctl -c /path/to/config/file -s name_of_systemc_template 
+
+=head1 LICENSE
+
+This module is free software; you can redistribute it and/or
+modify it under the same terms as Perl itself. See perldoc perlartistic.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+=cut
