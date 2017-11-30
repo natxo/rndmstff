@@ -1,0 +1,92 @@
+#!/usr/bin/env perl
+
+use warnings;
+use strict;
+use Term::ANSIColor;
+use Time::Piece;
+
+use VMware::VIRuntime;
+use VMware::VILib;
+
+use Data::Dumper;
+
+Opts::parse();
+Opts::validate();
+Util::connect;
+
+# using Time::Piece we get date as 'dd-mm-yyyy'
+my $t    = localtime();
+my $date = $t->dmy("-");
+
+# find vms, just get name and snapshot info
+my $vms = Vim::find_entity_views(
+    view_type  => 'VirtualMachine',
+    properties => [ 'name', 'snapshot', ],
+);
+
+for my $vm (@$vms) {
+
+    _remove_all_snaps($vm);
+
+#    _create_snap($vm);
+
+}
+
+sub _create_snap {
+    my ($vm) = @_;
+    print "creating snapshot (quiesced, no memory dump) for ";
+    print $vm->name . " [Maintenance $date]...\n";
+    eval {
+        $vm->CreateSnapshot(
+            name    => "Maintenance $date",
+            memory  => 0,
+            quiesce => 1,
+        );
+    };
+    if ($@) {
+        print color('red');
+        print Dumper $@;
+        print color('reset');
+    }
+    else {
+        print color('blue');
+        print "snapshot [Maintenance $date] created successfully for "
+          . $vm->name, "\n";
+        print color('reset');
+    }
+}
+
+sub _remove_all_snaps {
+    my ($vm) = @_;
+
+    # skip if no snapshots on vm
+    unless ( defined $vm->snapshot ) {
+        print $vm->name . " has no snapshots, skipping\n";
+        return;
+    }
+    my $snaps = $vm->snapshot->rootSnapshotList;
+    for my $snap_property (@$snaps) {
+
+        # skip if no child snapshots found
+        last unless $snap_property->childSnapshotList;
+
+        my $children = $snap_property->childSnapshotList;
+        for my $child (@$children) {
+            print "\t\t" . $child->name . "\n";
+        }
+    }
+
+    print "removing all snapshots for " . $vm->name . "...\n";
+    eval { $vm->RemoveAllSnapshots; };
+    if ($@) {
+        print color('red');
+        print Dumper $@;
+        print color('reset');
+    }
+    else {
+        print color('yellow');
+        print "All snapshots removed successfully from " . $vm->name . "\n";
+        print color('reset');
+    }
+
+}
