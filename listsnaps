@@ -10,13 +10,51 @@ use VMware::VILib;
 
 use Data::Dumper;
 
-Opts::parse();
-Opts::validate();
-Util::connect;
-
 # using Time::Piece we get date as 'dd-mm-yyyy'
 my $t    = localtime();
 my $date = $t->dmy("-");
+
+my %opts = (
+    operation => {
+        type     => "=s",
+        help     => "list/create/removeall/remove snapshots",
+        required => 1,
+        default  => "list",
+    },
+    datacenter => {
+        type     => "=s",
+        help     => "datacenter on which to operate",
+        required => 0,
+    },
+    folder => {
+        type     => "=s",
+        help     => "folder on which to operate",
+        required => 0,
+    },
+    snapname => {
+        type     => "=s",
+        help     => "name of the crated snapshot",
+        required => 0,
+        default  => "Maintenance $date",
+    }
+);
+
+Opts::add_options(%opts);
+Opts::parse();
+Opts::validate();
+
+my $operation  = Opts::get_option('operation');
+my $datacenter = Opts::get_option('datacenter');
+my $folder     = Opts::get_option('folder');
+my $snapname   = Opts::get_option('snapname');
+
+unless ( $operation =~ m/^(list|removeall|create|remove)$/i ) {
+    print "Unknown operation $operation\n";
+    exit 1;
+}
+
+# connect to esxi/vcenter
+Util::connect;
 
 # find vms, just get name and snapshot info
 my $vms = Vim::find_entity_views(
@@ -24,21 +62,28 @@ my $vms = Vim::find_entity_views(
     properties => [ 'name', 'snapshot', ],
 );
 
+my %action_map = (
+    list      => \&_list_snaps,
+    create    => \&_create_snap,
+    removeall => \&_remove_all_snaps,
+    remove    => \&_remove_snap,
+);
+
 for my $vm (@$vms) {
+    print color("white");
+    print "\n" . $vm->name . "\n";
+    print color('reset');
 
-    _remove_all_snaps($vm);
-
-#    _create_snap($vm);
-
+    $action_map{$operation}->($vm);
 }
 
 sub _create_snap {
     my ($vm) = @_;
     print "creating snapshot (quiesced, no memory dump) for ";
-    print $vm->name . " [Maintenance $date]...\n";
+    print $vm->name . " [$snapname]...\n";
     eval {
         $vm->CreateSnapshot(
-            name    => "Maintenance $date",
+            name    => $snapname,
             memory  => 0,
             quiesce => 1,
         );
@@ -50,8 +95,7 @@ sub _create_snap {
     }
     else {
         print color('blue');
-        print "snapshot [Maintenance $date] created successfully for "
-          . $vm->name, "\n";
+        print "snapshot $snapname created successfully for " . $vm->name, "\n";
         print color('reset');
     }
 }
@@ -65,6 +109,7 @@ sub _remove_all_snaps {
         return;
     }
     my $snaps = $vm->snapshot->rootSnapshotList;
+
     for my $snap_property (@$snaps) {
 
         # skip if no child snapshots found
@@ -89,4 +134,90 @@ sub _remove_all_snaps {
         print color('reset');
     }
 
+}
+
+sub _list_snaps {
+    my ($vm) = @_;
+
+    # skip if no snapshots on vm
+    unless ( defined $vm->snapshot ) {
+        print $vm->name . " has no snapshots, skipping\n";
+        return;
+    }
+
+    printf "\n%-47s%-16s %s %s\n", "Name", "Date", "State", "Quiesced";
+    print_tree( $vm->snapshot->currentSnapshot,
+        " ", $vm->snapshot->rootSnapshotList );
+}
+
+sub _remove_snap {
+    my ($vm) = @_;
+
+    # skip if no snapshots on vm
+    unless ( defined $vm->snapshot ) {
+        print $vm->name . " has no snapshots, skipping\n";
+        return;
+    }
+    my ( $snap, $count ) =
+      find_snapshot_name( $vm->snapshot->rootSnapshotList, $snapname );
+
+    if ( defined $snap and $count == 1 ) {
+        print "snapshot $snapname found on " . $vm->name . "; removing it ...\n";
+        my $snapshot = Vim::get_view( mo_ref => $snap->snapshot );
+        eval {
+            $snapshot->RemoveSnapshot( removeChildren => 0 );
+            print color('yellow');
+            print "snapshot $snapname successfully removed from "
+              . $vm->name . "\n";
+            print color('reset');
+        };
+        if ($@) {
+            print "Something went wrong: $@\n";
+        }
+
+    }
+    elsif ( $count > 1 ) {
+        print $vm->name . " has more than one snapshot called $snapname\n";
+        print "use the gui to remove them manually\n";
+    }
+    elsif ( $count == 0 ) {
+        print "No snapshot called $snapname found on " . $vm->name . "\n";
+    }
+}
+
+sub print_tree {
+    my ( $ref, $str, $tree ) = @_;
+    my $head = " ";
+    foreach my $node (@$tree) {
+        $head = ( $ref->value eq $node->snapshot->value ) ? " " : " "
+          if ( defined $ref );
+        my $quiesced = ( $node->quiesced ) ? "Y" : "N";
+        printf "%s%-48.48s%16.16s %s %s\n", $head, $str . $node->name,
+          $node->createTime, $node->state->val, $quiesced;
+        print_tree( $ref, $str . " ", $node->childSnapshotList );
+    }
+    return;
+}
+
+#  Find a snapshot with the name
+#  This either returns: The reference to the snapshot
+#  0 if not found & 1 if it's a duplicate
+#  Duplicacy check is required for rename, remove and revert operations
+#  For these operation specified snapshot name must be unique
+# ==================================================
+sub find_snapshot_name {
+    my ( $tree, $name ) = @_;
+    my $ref   = undef;
+    my $count = 0;
+    foreach my $node (@$tree) {
+        if ( $node->name eq $name ) {
+            $ref = $node;
+            $count++;
+        }
+        my ( $subRef, $subCount ) =
+          find_snapshot_name( $node->childSnapshotList, $name );
+        $count = $count + $subCount;
+        $ref = $subRef if ($subCount);
+    }
+    return ( $ref, $count );
 }
