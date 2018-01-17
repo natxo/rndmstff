@@ -1,0 +1,279 @@
+#!/usr/bin/env perl 
+#===============================================================================
+#
+#         FILE: kk.pl
+#
+#        USAGE: ./kk.pl
+#
+#  DESCRIPTION:
+#
+#      OPTIONS: ---
+# REQUIREMENTS: ---
+#         BUGS: ---
+#        NOTES: ---
+#       AUTHOR: YOUR NAME (),
+# ORGANIZATION:
+#      VERSION: 1.0
+#      CREATED: 01/11/2018 08:55:58 PM
+#     REVISION: ---
+#===============================================================================
+
+use strict;
+use warnings;
+use Time::Piece;
+
+my $t = localtime();
+
+# contrust a hash of hashes. The key of the hash of hashes is the
+# requestid output by getcert request, and the hash inside each hash is
+# a key/value combination of every attribute of the request like isssue,
+# track, status, etc
+#
+# This is a sample of getcert list output
+#
+# Number of certificates and requests being tracked: 10.
+# Request ID '20170914112455':
+#    status: MONITORING
+#    stuck: no
+#    key pair storage: type=FILE,location='/var/kerberos/krb5kdc/kdc.key'
+#    certificate: type=FILE,location='/var/kerberos/krb5kdc/kdc.crt'
+#    CA: SelfSign
+#    issuer: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+#    subject: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+#    expires: 2018-09-14 11:24:55 UTC
+#    principal name: krbtgt/UNIX.DOMAIN.TLD@UNIX.DOMAIN.TLD
+#    certificate template/profile: KDCs_PKINIT_Certs
+#    pre-save command:
+#    post-save command: /usr/libexec/ipa/certmonger/renew_kdc_cert
+#    track: yes
+#    auto-renew: yes
+#Request ID '20171206170849':
+#    status: MONITORING
+#    stuck: no
+#    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='auditSigningCert cert-pki-ca',token='NSS Certificate DB',pin set
+#    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='auditSigningCert cert-pki-ca',token='NSS Certificate DB'
+#    CA: dogtag-ipa-ca-renew-agent
+#    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+#    subject: CN=CA Audit,O=UNIX.DOMAIN.TLD
+#    expires: 2018-02-16 19:06:01 UTC
+#    key usage: digitalSignature,nonRepudiation
+#    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+#    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "auditSigningCert cert-pki-ca"
+#    track: yes
+#    auto-renew: yes
+#
+# As you can see, we have a first header line, and after that two
+# similar sections starting with 'Request ID'. So we will use the line
+# separator set on 'Request' instead of CR, and process the request ID
+# as a hash key, with as value another hash reference with as key/value
+# pairs the information on the rest of the lines of each request
+# (issuer, subject, etc).
+#
+#
+# placeholder where request id info will be kept
+my $hash_ref;
+
+# process getcert list
+while ( my $line = <DATA> ) {
+
+    # the line delminiter is the word 'Request'
+    $/ = "Request";
+    chomp $line;
+    my @line = split( /[\n\r]/, $line );
+
+    my $requestid;
+    my %temp;
+
+    for (@line) {
+        next if $_ =~ /number of certificates/i;
+        my ( $key, $value ) = split(/:/);
+        if ( $key =~ m/ ID '(\d+)'/ ) {
+            $requestid = $1;
+        }
+
+        # left trim key
+        else {
+            $key =~ s/^\s+//;
+            $temp{$key} = $value;
+        }
+        $hash_ref->{$requestid} = \%temp;
+    }
+}
+
+while ( my ( $key, $value ) = each %$hash_ref ) {
+    print "request id: $key\n";
+
+    # skip if not stuck
+    _comp_date( $value->{'expires'} );
+    if ( $value->{'stuck'} eq "no" ) {
+        next;
+    }
+}
+
+#-------------------------------------------------------------------------------
+#
+#-------------------------------------------------------------------------------
+sub _comp_date {
+    my ($date_str) = @_;
+
+    # rtrim/ltrim plus remove the hours after YYYY-MM-DD
+    $date_str =~ s/^\s+|\s+\d+$//g;
+
+    my $expiration = Time::Piece->strptime( $date_str, '%Y-%m-%d' );
+    print "expiration: $expiration\n";
+    
+    # get nr days between expiration and today
+    my $diff = $expiration - $t;
+    print "diff in days: " . int( $diff->days ) . "\n";
+
+}
+
+__DATA__
+Number of certificates and requests being tracked: 10.
+Request ID '20170914112455':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=FILE,location='/var/kerberos/krb5kdc/kdc.key'
+    certificate: type=FILE,location='/var/kerberos/krb5kdc/kdc.crt'
+    CA: SelfSign
+    issuer: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+    subject: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+    expires: 2018-09-14 11:24:55 UTC
+    principal name: krbtgt/UNIX.DOMAIN.TLD@UNIX.DOMAIN.TLD
+    certificate template/profile: KDCs_PKINIT_Certs
+    pre-save command: 
+    post-save command: /usr/libexec/ipa/certmonger/renew_kdc_cert
+    track: yes
+    auto-renew: yes
+Request ID '20171206170849':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='auditSigningCert cert-pki-ca',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='auditSigningCert cert-pki-ca',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=CA Audit,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-16 19:06:01 UTC
+    key usage: digitalSignature,nonRepudiation
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "auditSigningCert cert-pki-ca"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170850':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='ocspSigningCert cert-pki-ca',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='ocspSigningCert cert-pki-ca',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=OCSP Subsystem,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-16 19:05:58 UTC
+    key usage: digitalSignature,nonRepudiation,keyCertSign,cRLSign
+    eku: id-kp-OCSPSigning
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "ocspSigningCert cert-pki-ca"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170851':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='subsystemCert cert-pki-ca',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='subsystemCert cert-pki-ca',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=CA Subsystem,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-16 19:06:00 UTC
+    key usage: digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+    eku: id-kp-serverAuth,id-kp-clientAuth
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "subsystemCert cert-pki-ca"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170853':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='caSigningCert cert-pki-ca',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='caSigningCert cert-pki-ca',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    expires: 2036-02-27 19:05:55 UTC
+    key usage: digitalSignature,nonRepudiation,keyCertSign,cRLSign
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "caSigningCert cert-pki-ca"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170855':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=FILE,location='/var/lib/ipa/ra-agent.key'
+    certificate: type=FILE,location='/var/lib/ipa/ra-agent.pem'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=IPA RA,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-16 19:06:49 UTC
+    key usage: digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+    eku: id-kp-serverAuth,id-kp-clientAuth
+    pre-save command: /usr/libexec/ipa/certmonger/renew_ra_cert_pre
+    post-save command: /usr/libexec/ipa/certmonger/renew_ra_cert
+    track: yes
+    auto-renew: yes
+Request ID '20171206170858':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='Server-Cert cert-pki-ca',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='Server-Cert cert-pki-ca',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-16 19:05:59 UTC
+    key usage: digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+    eku: id-kp-serverAuth
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "Server-Cert cert-pki-ca"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170900':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='caSigningCert cert-pki-ca 9e05f656-f939-4679-86ea-af90adebbdfa',token='NSS Certificate DB',pin set
+    certificate: type=NSSDB,location='/etc/pki/pki-tomcat/alias',nickname='caSigningCert cert-pki-ca 9e05f656-f939-4679-86ea-af90adebbdfa',token='NSS Certificate DB'
+    CA: dogtag-ipa-ca-renew-agent
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=Icinga2 CA,O=UNIX.DOMAIN.TLD
+    expires: 2037-07-16 07:44:29 UTC
+    key usage: digitalSignature,nonRepudiation,keyCertSign,cRLSign
+    pre-save command: /usr/libexec/ipa/certmonger/stop_pkicad
+    post-save command: /usr/libexec/ipa/certmonger/renew_ca_cert "caSigningCert cert-pki-ca 9e05f656-f939-4679-86ea-af90adebbdfa"
+    track: yes
+    auto-renew: yes
+Request ID '20171206170904':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/dirsrv/slapd-UNIX-DOMAIN.TLD',nickname='Server-Cert',token='NSS Certificate DB',pinfile='/etc/dirsrv/slapd-UNIX-DOMAIN.TLD/pwdfile.txt'
+    certificate: type=NSSDB,location='/etc/dirsrv/slapd-UNIX-DOMAIN.TLD',nickname='Server-Cert',token='NSS Certificate DB'
+    CA: IPA
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-27 19:08:00 UTC
+    key usage: digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+    eku: id-kp-serverAuth,id-kp-clientAuth
+    pre-save command: 
+    post-save command: /usr/libexec/ipa/certmonger/restart_dirsrv UNIX-DOMAIN.TLD
+    track: yes
+    auto-renew: yes
+Request ID '20171206170912':
+    status: MONITORING
+    stuck: no
+    key pair storage: type=NSSDB,location='/etc/httpd/alias',nickname='Server-Cert',token='NSS Certificate DB',pinfile='/etc/httpd/alias/pwdfile.txt'
+    certificate: type=NSSDB,location='/etc/httpd/alias',nickname='Server-Cert',token='NSS Certificate DB'
+    CA: IPA
+    issuer: CN=Certificate Authority,O=UNIX.DOMAIN.TLD
+    subject: CN=kdc1.unix.domain.tld,O=UNIX.DOMAIN.TLD
+    expires: 2018-02-27 19:13:38 UTC
+    key usage: digitalSignature,nonRepudiation,keyEncipherment,dataEncipherment
+    eku: id-kp-serverAuth,id-kp-clientAuth
+    pre-save command: 
+    post-save command: /usr/libexec/ipa/certmonger/restart_httpd
+    track: yes
+    auto-renew: yes
