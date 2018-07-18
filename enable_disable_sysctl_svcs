@@ -5,8 +5,7 @@ use warnings;
 use Getopt::Long;
 use Pod::Usage;
 
-my ( @lines );
-
+my (@lines);
 
 Getopt::Long::Configure( "no_ignore_case", "bundling" );
 GetOptions(
@@ -70,8 +69,8 @@ if ( scalar @difference > 0 ) {
     for (@in_cust_svcs) {
         next unless $_ =~ /[[:alpha:]]/;
         print "\t[$_]\n";
-        print "systemctl stop test\@$_\.service\n";
-        print "systemctl disable test\@$_\.service\n";
+        system("sudo systemctl stop test\@$_\.service");
+        system("sudo systemctl disable test\@$_\.service");
     }
 
     print "In customer file, not svcs, adding service(s):\n";
@@ -79,9 +78,13 @@ if ( scalar @difference > 0 ) {
     for (@in_cust_file) {
         next unless $_ =~ /[[:alpha:]]/;
         print "\t[$_]\n";
-        print "systemctl enable test\@$_\.service\n";
-        print "systemctl start test\@$_\.service\n";
+        system( "sudo systemctl enable test\@$_\.service" );
+        system("sudo systemctl start test\@$_\.service" );
     }
+}
+else {
+    print
+"customers and services are synchronized, move along, nothing to see here\n";
 }
 
 =head1 NAME

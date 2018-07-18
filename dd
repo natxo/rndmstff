@@ -77,7 +77,8 @@ _gen_mntpnt_dict($disks);
 
 my $dsk_inf_ref = _disk_has_part();
 
-for my $disk ( sort keys $dsk_inf_ref ) {
+#for my $disk ( sort keys $dsk_inf_ref ) {
+for my $disk ( sort keys %{$dsk_inf_ref} ) {
 
     # skip systemdisk
     next if $disk eq $systemdisk;
@@ -132,6 +133,7 @@ sub _detect_blk_parts {
         # skip fd0/sr0 (floppy disk/cdrom)
         next if $blk =~ m/^(fd|sr)0.*/;
 
+        print "$blk\n";
         # match if disk detected, no partition
         if ( $blk =~ /^(\w+)\s+(\w+)\s+$/ ) {
             $HoA_ref->{$1} = [ $2, 0, 0, 0 ];
